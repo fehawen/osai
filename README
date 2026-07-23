@@ -1,0 +1,6 @@
+osai
+----
+
+osai is a one-shot command-line client for the OpenAI Responses API.  It reads a
+single prompt from the command line, stdin, or a file, performs one request,
+writes the response to stdout, and exits.
