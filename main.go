@@ -41,8 +41,12 @@ Options:
   -prompt string
         User prompt or @file
 
-  -input-file file
+  -input file
         Read additional input from file
+
+  -state file
+        Read and update the previous response ID from file.
+        The parent directory must already exist.
 
   -temperature float
         Sampling temperature
@@ -51,7 +55,7 @@ Options:
         Maximum output tokens
 
 Input:
-  User input may be supplied using -prompt, stdin, or -input-file.
+  User input may be supplied using -prompt, stdin, or -input.
 
   If both -prompt and stdin/file are present, they are concatenated
   with a blank line between them.
@@ -110,7 +114,7 @@ func readInput(inputFile string) (string, error) {
 	stdin := isStdinPipe()
 
 	if inputFile != "" && stdin {
-		return "", errors.New("-input-file and stdin cannot both be used")
+		return "", errors.New("-input and stdin cannot both be used")
 	}
 
 	switch {
@@ -148,6 +152,7 @@ func buildRequest(
 	model string,
 	system string,
 	prompt string,
+	previousResponseID string,
 	maxOutputTokens int,
 	temperature float64,
 ) responses.ResponseNewParams {
@@ -162,15 +167,52 @@ func buildRequest(
 		req.Instructions = openai.String(system)
 	}
 
+	if previousResponseID != "" {
+		req.PreviousResponseID = openai.String(previousResponseID)
+	}
+
 	if maxOutputTokens > 0 {
 		req.MaxOutputTokens = openai.Int(int64(maxOutputTokens))
 	}
 
-	if temperature != 0 {
+	if temperature >= 0 {
 		req.Temperature = openai.Float(temperature)
 	}
 
 	return req
+}
+
+func readState(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read %q: %w", path, err)
+	}
+
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return "", fmt.Errorf("state file %q is empty", path)
+	}
+
+	return id, nil
+}
+
+func writeState(path, id string) error {
+	if path == "" {
+		return nil
+	}
+
+	if err := os.WriteFile(path, []byte(id+"\n"), 0600); err != nil {
+		return fmt.Errorf("write %q: %w", path, err)
+	}
+
+	return nil
 }
 
 func main() {
@@ -179,6 +221,7 @@ func main() {
 		system          string
 		prompt          string
 		inputFile       string
+		stateFile       string
 		maxOutputTokens int
 		temperature     float64
 	)
@@ -186,9 +229,10 @@ func main() {
 	flag.StringVar(&model, "model", "", "Model to use (required)")
 	flag.StringVar(&system, "system", "", "System prompt or @file")
 	flag.StringVar(&prompt, "prompt", "", "User prompt or @file")
-	flag.StringVar(&inputFile, "input-file", "", "Read additional input from file")
+	flag.StringVar(&inputFile, "input", "", "Read additional input from file")
+	flag.StringVar(&stateFile, "state", "", "Read and update the previous response ID from file")
 	flag.IntVar(&maxOutputTokens, "max-output-tokens", 0, "Maximum output tokens")
-	flag.Float64Var(&temperature, "temperature", 0, "Sampling temperature")
+	flag.Float64Var(&temperature, "temperature", -1, "Sampling temperature")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -222,6 +266,11 @@ func main() {
 		usageError(errors.New("no input provided"))
 	}
 
+	previousResponseID, err := readState(stateFile)
+	if err != nil {
+		fail(exitInput, err)
+	}
+
 	client := openai.NewClient()
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
@@ -231,6 +280,7 @@ func main() {
 		model,
 		systemText,
 		finalPrompt,
+		previousResponseID,
 		maxOutputTokens,
 		temperature,
 	)
@@ -247,4 +297,9 @@ func main() {
 	if !strings.HasSuffix(text, "\n") {
 		fmt.Println()
 	}
+
+	if err := writeState(stateFile, resp.ID); err != nil {
+		fail(exitInput, err)
+	}
+
 }
