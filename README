@@ -1,6 +1,201 @@
 osai
 ----
 
-osai is a one-shot command-line client for the OpenAI Responses API.  It reads a
-single prompt from the command line, stdin, or a file, performs one request,
+osai is a one-shot command-line client for the OpenAI Responses API.
+
+It reads input from the command line, stdin, or a file, performs one request,
 writes the response to stdout, and exits.
+
+It is deliberately small and stateless by default. Conversation continuation can
+be enabled explicitly with -state.
+
+
+Requirements
+
+    Go 1.24 or newer.
+    An OpenAI API key in OPENAI_API_KEY.
+
+
+Usage
+
+    osai -model MODEL [options]
+
+
+Options
+
+    -model string
+        Model to use (required)
+
+    -system string
+        System prompt or @file
+
+    -prompt string
+        User prompt or @file
+
+    -input file
+        Read additional input from file
+
+    -state file
+        Read and update the previous response ID from file.
+        The parent directory must already exist.
+
+    -temperature float
+        Sampling temperature
+
+    -max-output-tokens int
+        Maximum output tokens
+
+
+Input
+
+    Input can be supplied using -prompt, stdin, or -input.
+
+    A prompt can be given directly:
+
+        osai -model gpt-5-mini -prompt "Explain DNS delegation."
+
+    A prompt can be read from a file:
+
+        osai -model gpt-5-mini -prompt @prompt.txt
+
+    Additional input can be supplied separately:
+
+        osai -model gpt-5-mini \
+            -prompt "Analyze this HTTP request:" \
+            -input request.txt
+
+    stdin can be used directly:
+
+        cat request.txt | osai -model gpt-5-mini
+
+    or:
+
+        osai -model gpt-5-mini -prompt "Analyze this:" < request.txt
+
+    -input and stdin cannot be used at the same time.
+
+    The prompt can also be combined with stdin:
+
+        osai -model gpt-5-mini \
+            -prompt "Find the security-relevant parts of this request:" \
+            < request.txt
+
+    When both -prompt and stdin or -input are present, the two inputs are
+    concatenated with a blank line between them.
+
+    @file can be used with -system and -prompt to read their contents from a
+    file. @~/... is also supported.
+
+
+State
+
+    osai is stateless by default. Each invocation makes an independent request.
+
+    The -state option enables explicit continuation using the OpenAI Responses
+    API's previous response ID.
+
+        osai -model gpt-5-mini \
+            -state /tmp/osai-state \
+            -prompt "My name is osai."
+
+    A subsequent invocation using the same state file continues from the
+    previous response:
+
+        osai -model gpt-5-mini \
+            -state /tmp/osai-state \
+            -prompt "What is my name?"
+
+    The state file contains only the latest response ID. After a successful
+    request, osai replaces it with the new response ID.
+
+    If the state file does not exist, the request starts without a previous
+    response ID. The state file is created after a successful response.
+
+    The parent directory must already exist. osai does not create it.
+
+    If the API request fails, the state file is left unchanged.
+
+    No state file is created or used unless -state is explicitly specified.
+
+
+Validation
+
+    osai validates its own command-line interface and input handling, but does
+    not attempt to duplicate model-specific API validation.
+
+    For example, osai does not maintain a list of which models support
+    temperature, nor does it maintain model-specific output-token limits.
+
+    Values supplied to the API are therefore validated by the API itself.
+
+    This keeps osai independent of model-specific capabilities and avoids
+    duplicating information that can change independently of the client.
+
+
+Output
+
+    On success, the model response is written to stdout. Errors are written to
+    stderr. Exit status 0 indicates success.
+
+    Exit statuses:
+
+        0    success
+        1    usage error
+        2    OPENAI_API_KEY is missing
+        3    API error
+        4    input or file error
+
+    The output from osai contains only the model response. Presentation such as
+    prompts, colors, or interactive formatting belongs to programs built around
+    osai rather than to osai itself.
+
+
+Composition
+
+    osai is intended to be simple to wrap with shell scripts when a particular
+    workflow needs fixed options or additional convenience.
+
+    For example, a small wrapper can provide fixed model settings and keep
+    conversation state in the current working directory:
+
+        #!/bin/sh
+
+        exec osai \
+            -model gpt-5-mini \
+            -state "$PWD/.osai-state" \
+            "$@"
+
+    A system prompt can also be associated with the current working directory:
+
+        #!/bin/sh
+
+        set -- \
+            -model gpt-5-mini \
+            -state "$PWD/.osai-state" \
+            "$@"
+
+        if [ -f "$PWD/.osai-system-prompt" ]; then
+            set -- \
+                -system "@$PWD/.osai-system-prompt" \
+                "$@"
+        fi
+
+        exec osai "$@"
+
+    An interactive REPL can be built around the same interface:
+
+        #!/bin/sh
+
+        state="${1:-/tmp/osai-state}"
+
+        while :; do
+            printf 'osai > '
+            IFS= read -r prompt || break
+
+            [ -n "$prompt" ] || continue
+
+            osai \
+                -model gpt-5-mini \
+                -state "$state" \
+                -prompt "$prompt"
+        done
