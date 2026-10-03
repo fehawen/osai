@@ -12,6 +12,7 @@ import (
 	"time"
 
 	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 )
 
@@ -34,6 +35,9 @@ Usage:
 Options:
   -model string
         Model to use (required)
+
+  -provider string
+        API provider: openai or xai (default "openai")
 
   -system string
         System prompt or @file
@@ -61,7 +65,8 @@ Input:
   with a blank line between them.
 
 Environment:
-  OPENAI_API_KEY
+  OPENAI_API_KEY  Used with -provider openai
+  XAI_API_KEY     Used with -provider xai
 `
 
 func usage() {
@@ -149,6 +154,7 @@ func buildPrompt(prompt, input string) string {
 }
 
 func buildRequest(
+	provider string,
 	model string,
 	system string,
 	prompt string,
@@ -158,13 +164,38 @@ func buildRequest(
 ) responses.ResponseNewParams {
 	req := responses.ResponseNewParams{
 		Model: model,
-		Input: responses.ResponseNewParamsInputUnion{
-			OfString: openai.String(prompt),
-		},
 	}
 
-	if system != "" {
-		req.Instructions = openai.String(system)
+	if provider == "xai" {
+		input := make([]responses.ResponseInputItemUnionParam, 0, 2)
+
+		if previousResponseID == "" && system != "" {
+			input = append(input,
+				responses.ResponseInputItemParamOfMessage(
+					system,
+					responses.EasyInputMessageRoleSystem,
+				),
+			)
+		}
+
+		input = append(input,
+			responses.ResponseInputItemParamOfMessage(
+				prompt,
+				responses.EasyInputMessageRoleUser,
+			),
+		)
+
+		req.Input = responses.ResponseNewParamsInputUnion{
+			OfInputItemList: input,
+		}
+	} else {
+		req.Input = responses.ResponseNewParamsInputUnion{
+			OfString: openai.String(prompt),
+		}
+
+		if system != "" {
+			req.Instructions = openai.String(system)
+		}
 	}
 
 	if previousResponseID != "" {
@@ -218,6 +249,7 @@ func writeState(path, id string) error {
 func main() {
 	var (
 		model           string
+		provider        string
 		system          string
 		prompt          string
 		inputFile       string
@@ -227,6 +259,7 @@ func main() {
 	)
 
 	flag.StringVar(&model, "model", "", "Model to use (required)")
+	flag.StringVar(&provider, "provider", "openai", "API provider: openai or xai")
 	flag.StringVar(&system, "system", "", "System prompt or @file")
 	flag.StringVar(&prompt, "prompt", "", "User prompt or @file")
 	flag.StringVar(&inputFile, "input", "", "Read additional input from file")
@@ -241,9 +274,23 @@ func main() {
 		usageError(errors.New("missing required -model"))
 	}
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	var apiKeyEnv string
+
+	switch provider {
+	case "openai":
+		apiKeyEnv = "OPENAI_API_KEY"
+	case "xai":
+		apiKeyEnv = "XAI_API_KEY"
+	default:
+		usageError(fmt.Errorf(
+			"unsupported provider %q (expected openai or xai)",
+			provider,
+		))
+	}
+
+	apiKey := os.Getenv(apiKeyEnv)
 	if apiKey == "" {
-		fail(exitNoAPIKey, errors.New("OPENAI_API_KEY is not set"))
+		fail(exitNoAPIKey, fmt.Errorf("%s is not set", apiKeyEnv))
 	}
 
 	systemText, err := expandAtFile(system)
@@ -271,12 +318,24 @@ func main() {
 		fail(exitInput, err)
 	}
 
-	client := openai.NewClient()
+	clientOptions := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+
+	if provider == "xai" {
+		clientOptions = append(
+			clientOptions,
+			option.WithBaseURL("https://api.x.ai/v1"),
+		)
+	}
+
+	client := openai.NewClient(clientOptions...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	req := buildRequest(
+		provider,
 		model,
 		systemText,
 		finalPrompt,
@@ -301,5 +360,4 @@ func main() {
 	if err := writeState(stateFile, resp.ID); err != nil {
 		fail(exitInput, err)
 	}
-
 }

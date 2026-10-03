@@ -1,7 +1,7 @@
 osai
 ----
 
-osai is a one-shot command-line client for the OpenAI Responses API.
+osai is a one-shot command-line client for the OpenAI and xAI Responses API.
 
 It reads input from the command line, stdin, or a file, performs one request,
 writes the response to stdout, and exits.
@@ -13,7 +13,7 @@ be enabled explicitly with -state.
 Requirements
 
     Go 1.24 or newer.
-    An OpenAI API key in OPENAI_API_KEY.
+    An OpenAI API key in OPENAI_API_KEY and/or an xAI API key in XAI_API_KEY.
 
 
 Usage
@@ -25,6 +25,9 @@ Options
 
     -model string
         Model to use (required)
+
+    -provider string
+        API provider: openai or xai (default "openai")
 
     -system string
         System prompt or @file
