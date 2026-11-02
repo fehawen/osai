@@ -6,8 +6,8 @@ osai is a one-shot command-line client for the OpenAI and xAI Responses API.
 It reads input from the command line, stdin, or a file, performs one request,
 writes the response to stdout, and exits.
 
-It is deliberately small and stateless by default. Conversation continuation can
-be enabled explicitly with -state.
+It is deliberately small and stateless by default.  Conversation continuation
+can be enabled explicitly with -state.
 
 
 Requirements
@@ -87,12 +87,12 @@ Input
     concatenated with a blank line between them.
 
     @file can be used with -system and -prompt to read their contents from a
-    file. @~/... is also supported.
+    file.  @~/... is also supported.
 
 
 State
 
-    osai is stateless by default. Each invocation makes an independent request.
+    osai is stateless by default.  Each invocation makes an independent request.
 
     The -state option enables explicit continuation using the OpenAI Responses
     API's previous response ID.
@@ -108,13 +108,13 @@ State
             -state /tmp/osai-state \
             -prompt "What is my name?"
 
-    The state file contains only the latest response ID. After a successful
+    The state file contains only the latest response ID.  After a successful
     request, osai replaces it with the new response ID.
 
     If the state file does not exist, the request starts without a previous
-    response ID. The state file is created after a successful response.
+    response ID.  The state file is created after a successful response.
 
-    The parent directory must already exist. osai does not create it.
+    The parent directory must already exist.  osai does not create it.
 
     If the API request fails, the state file is left unchanged.
 
@@ -137,8 +137,8 @@ Validation
 
 Output
 
-    On success, the model response is written to stdout. Errors are written to
-    stderr. Exit status 0 indicates success.
+    On success, the model response is written to stdout.  Errors are written to
+    stderr.  Exit status 0 indicates success.
 
     Exit statuses:
 
@@ -148,7 +148,7 @@ Output
         3    API error
         4    input or file error
 
-    The output from osai contains only the model response. Presentation such as
+    The output from osai contains only the model response.  Presentation such as
     prompts, colors, or interactive formatting belongs to programs built around
     osai rather than to osai itself.
 
