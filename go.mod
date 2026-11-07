@@ -1,6 +1,6 @@
 module github.com/fehawen/osai
 
-go 1.24.6
+go 1.25
 
 require github.com/openai/openai-go/v3 v3.37.0
 
