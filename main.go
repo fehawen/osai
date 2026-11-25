@@ -12,7 +12,6 @@ import (
 	"time"
 
 	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 )
 
@@ -36,9 +35,6 @@ Options:
   -model string
         Model to use (required)
 
-  -provider string
-        API provider: openai or xai (default "openai")
-
   -system string
         System prompt or @file
 
@@ -51,6 +47,9 @@ Options:
   -state file
         Read and update the previous response ID from file.
         The parent directory must already exist.
+
+  -compact int
+        Enable server-side context compaction at the specified token threshold
 
   -temperature float
         Sampling temperature
@@ -65,8 +64,7 @@ Input:
   with a blank line between them.
 
 Environment:
-  OPENAI_API_KEY  Used with -provider openai
-  XAI_API_KEY     Used with -provider xai
+  OPENAI_API_KEY
 `
 
 func usage() {
@@ -79,7 +77,7 @@ func fail(code int, err error) {
 }
 
 func usageError(err error) {
-	fail(exitUsage, fmt.Errorf("%v\n\nTry 'osai -h' for more information.", err))
+	fail(exitUsage, fmt.Errorf("%v\n\nTry 'osai -h' for more information", err))
 }
 
 func expandAtFile(value string) (string, error) {
@@ -128,6 +126,7 @@ func readInput(inputFile string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read %q: %w", inputFile, err)
 		}
+
 		return string(data), nil
 
 	case stdin:
@@ -135,6 +134,7 @@ func readInput(inputFile string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+
 		return string(data), nil
 
 	default:
@@ -154,48 +154,23 @@ func buildPrompt(prompt, input string) string {
 }
 
 func buildRequest(
-	provider string,
 	model string,
 	system string,
 	prompt string,
 	previousResponseID string,
 	maxOutputTokens int,
 	temperature float64,
+	compactThreshold int,
 ) responses.ResponseNewParams {
 	req := responses.ResponseNewParams{
 		Model: model,
+		Input: responses.ResponseNewParamsInputUnion{
+			OfString: openai.String(prompt),
+		},
 	}
 
-	if provider == "xai" {
-		input := make([]responses.ResponseInputItemUnionParam, 0, 2)
-
-		if previousResponseID == "" && system != "" {
-			input = append(input,
-				responses.ResponseInputItemParamOfMessage(
-					system,
-					responses.EasyInputMessageRoleSystem,
-				),
-			)
-		}
-
-		input = append(input,
-			responses.ResponseInputItemParamOfMessage(
-				prompt,
-				responses.EasyInputMessageRoleUser,
-			),
-		)
-
-		req.Input = responses.ResponseNewParamsInputUnion{
-			OfInputItemList: input,
-		}
-	} else {
-		req.Input = responses.ResponseNewParamsInputUnion{
-			OfString: openai.String(prompt),
-		}
-
-		if system != "" {
-			req.Instructions = openai.String(system)
-		}
+	if system != "" {
+		req.Instructions = openai.String(system)
 	}
 
 	if previousResponseID != "" {
@@ -208,6 +183,15 @@ func buildRequest(
 
 	if temperature >= 0 {
 		req.Temperature = openai.Float(temperature)
+	}
+
+	if compactThreshold > 0 {
+		req.ContextManagement = []responses.ResponseNewParamsContextManagement{
+			{
+				Type:             "compaction",
+				CompactThreshold: openai.Int(int64(compactThreshold)),
+			},
+		}
 	}
 
 	return req
@@ -223,6 +207,7 @@ func readState(path string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
+
 		return "", fmt.Errorf("read %q: %w", path, err)
 	}
 
@@ -248,24 +233,24 @@ func writeState(path, id string) error {
 
 func main() {
 	var (
-		model           string
-		provider        string
-		system          string
-		prompt          string
-		inputFile       string
-		stateFile       string
-		maxOutputTokens int
-		temperature     float64
+		model            string
+		system           string
+		prompt           string
+		inputFile        string
+		stateFile        string
+		maxOutputTokens  int
+		temperature      float64
+		compactThreshold int
 	)
 
 	flag.StringVar(&model, "model", "", "Model to use (required)")
-	flag.StringVar(&provider, "provider", "openai", "API provider: openai or xai")
 	flag.StringVar(&system, "system", "", "System prompt or @file")
 	flag.StringVar(&prompt, "prompt", "", "User prompt or @file")
 	flag.StringVar(&inputFile, "input", "", "Read additional input from file")
 	flag.StringVar(&stateFile, "state", "", "Read and update the previous response ID from file")
 	flag.IntVar(&maxOutputTokens, "max-output-tokens", 0, "Maximum output tokens")
 	flag.Float64Var(&temperature, "temperature", -1, "Sampling temperature")
+	flag.IntVar(&compactThreshold, "compact", 0, "Enable server-side context compaction at the specified token threshold")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -274,23 +259,13 @@ func main() {
 		usageError(errors.New("missing required -model"))
 	}
 
-	var apiKeyEnv string
-
-	switch provider {
-	case "openai":
-		apiKeyEnv = "OPENAI_API_KEY"
-	case "xai":
-		apiKeyEnv = "XAI_API_KEY"
-	default:
-		usageError(fmt.Errorf(
-			"unsupported provider %q (expected openai or xai)",
-			provider,
-		))
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fail(exitNoAPIKey, errors.New("OPENAI_API_KEY is not set"))
 	}
 
-	apiKey := os.Getenv(apiKeyEnv)
-	if apiKey == "" {
-		fail(exitNoAPIKey, fmt.Errorf("%s is not set", apiKeyEnv))
+	if compactThreshold < 0 {
+		usageError(errors.New("-compact must be greater than or equal to 0"))
 	}
 
 	systemText, err := expandAtFile(system)
@@ -318,30 +293,19 @@ func main() {
 		fail(exitInput, err)
 	}
 
-	clientOptions := []option.RequestOption{
-		option.WithAPIKey(apiKey),
-	}
-
-	if provider == "xai" {
-		clientOptions = append(
-			clientOptions,
-			option.WithBaseURL("https://api.x.ai/v1"),
-		)
-	}
-
-	client := openai.NewClient(clientOptions...)
+	client := openai.NewClient()
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	req := buildRequest(
-		provider,
 		model,
 		systemText,
 		finalPrompt,
 		previousResponseID,
 		maxOutputTokens,
 		temperature,
+		compactThreshold,
 	)
 
 	resp, err := client.Responses.New(ctx, req)

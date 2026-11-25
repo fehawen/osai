@@ -1,7 +1,7 @@
 osai
 ----
 
-osai is a one-shot command-line client for the OpenAI and xAI Responses API.
+osai is a one-shot command-line client for the OpenAI Responses API.
 
 It reads input from the command line, stdin, or a file, performs one request,
 writes the response to stdout, and exits.
@@ -12,7 +12,7 @@ can be enabled explicitly with -state.
 
 Requirements
 
-    An OpenAI API key in OPENAI_API_KEY and/or an xAI API key in XAI_API_KEY.
+    An OpenAI API key in OPENAI_API_KEY.
 
 
 Usage
@@ -25,9 +25,6 @@ Options
     -model string
         Model to use (required)
 
-    -provider string
-        API provider: openai or xai (default "openai")
-
     -system string
         System prompt or @file
 
@@ -38,8 +35,11 @@ Options
         Read additional input from file
 
     -state file
-        Read and update the previous response ID from file.
-        The parent directory must already exist.
+        Read and update the previous response ID from file
+        The parent directory must already exist
+
+    -compact int
+        Enable server-side context compaction at the specified token threshold
 
     -temperature float
         Sampling temperature
@@ -118,6 +118,29 @@ State
     If the API request fails, the state file is left unchanged.
 
     No state file is created or used unless -state is explicitly specified.
+
+
+Compaction
+
+    The -compact option enables server-side context compaction for Responses API
+    requests.  Its value is the token threshold at which OpenAI should compact
+    the conversation context.
+
+    For example:
+
+        osai -model gpt-5-mini \
+            -state /tmp/osai-state \
+            -compact 80000 \
+            -prompt "Continue our discussion."
+
+    Compaction is disabled by default.  A value of 0 leaves the request
+    unchanged.  Compaction is most useful with -state, where multiple
+    invocations continue the same conversation using previous_response_id.
+
+    OpenAI performs compaction server-side when the rendered context crosses
+    the configured threshold.  osai does not download, store, or manipulate the
+    conversation history itself.  The latest response ID continues to be
+    written to the state file after a successful request.
 
 
 Validation
