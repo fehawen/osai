@@ -45,8 +45,8 @@ Options:
         Read additional input from file
 
   -state file
-        Read and update the previous response ID from file.
-        The parent directory must already exist.
+        Read and update the previous response ID from file
+        The parent directory must already exist
 
   -compact int
         Enable server-side context compaction at the specified token threshold
